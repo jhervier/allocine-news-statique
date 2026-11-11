@@ -62,7 +62,9 @@ input:focus-visible,button:focus-visible,input[type=range]:focus-visible{outline
 .toolbar .tip{color:var(--muted);font-size:13px}
 .copy-row{display:flex;gap:8px;align-items:stretch;min-width:0}
 .copy-row input{flex:1 1 auto;min-width:0}
-#copySym{flex:0 0 auto;width:44px;padding:0;font:500 20px Arial,sans-serif}
+#copySym{flex:0 0 auto;align-self:flex-start;width:44px;height:42px;padding:0;font:500 20px Arial,sans-serif}
+.copy-row textarea{flex:1 1 auto;min-width:0;width:100%;height:auto;min-height:0;font:500 17px/1.3 var(--ui);color:var(--fg);background:#0e0e0f;border:1px solid var(--line);border-radius:4px;padding:9px 11px;resize:vertical;overflow:auto}
+.copy-row textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .prefix-row{display:flex;align-items:stretch;min-width:0}
 .prefix{display:flex;align-items:center;padding:0 8px 0 11px;font:500 15px var(--ui);color:var(--muted);background:#141416;border:1px solid var(--line);border-right:0;border-radius:4px 0 0 4px;white-space:nowrap}
 .prefix-row input{border-radius:0 4px 4px 0;min-width:0;flex:1 1 auto}
@@ -155,7 +157,7 @@ button:disabled{opacity:.4;cursor:not-allowed;filter:none}
         <label for="copyr">Copyright</label>
         <div class="copy-row">
           <button type="button" id="copySym" title="Ajouter ©" aria-label="Ajouter le symbole copyright">©</button>
-          <input type="text" id="copyr" value="" autocomplete="off" spellcheck="false">
+          <textarea id="copyr" rows="3" autocomplete="off" spellcheck="false" placeholder="Entrée pour aller à la ligne, 3 lignes maximum"></textarea>
         </div>
       </div>
     </fieldset>
@@ -192,8 +194,8 @@ var CFG = {
            stack: "'stratos','Stratos','Barlow Semi Condensed','Arial Narrow',sans-serif" },
   label: { size: 46, weight: 700, style: 'italic', left: 100, baseline: 1106, color: '#ffffff',
            stack: "'wayfinder-cf','Wayfinder CF','Playfair Display',Georgia,serif" },
-  /* copyright : Arial 15 px, blanc, centré, sous le cadre */
-  copy:  { size: 15.2, cx: 540, baseline: 1425, alpha: 0.45, spacing: 0.3, maxW: 1000,
+  /* copyright : Arial 15 px, blanc, centré, sous le cadre ; 3 lignes max, interligne 18 px */
+  copy:  { size: 15.2, cx: 540, baseline: 1425, alpha: 0.45, spacing: 0.3, maxW: 1040, maxLines: 3, pitch: 18,
            stack: "Arial,'Helvetica Neue',Helvetica,'Liberation Sans',sans-serif" }
 };
 
@@ -284,6 +286,32 @@ function labelFont(){ return CFG.label.style+' '+CFG.label.weight+' '+CFG.label.
 function copyFont(){ return '400 ' + CFG.copy.size + 'px ' + CFG.copy.stack; }
 function labelText(){ return ($('label').value || '').trim().toLocaleUpperCase('fr-FR'); }
 function copyText(){ return ($('copyr').value || '').trim(); }
+/* copyright : jusqu'à 3 lignes sur toute la largeur de l'image (20 px de marge de chaque côté),
+   centrées ; la dernière ligne garde la ligne de base du PSD, les autres montent au-dessus */
+function copyLines(t){
+  /* Entrée force un retour à la ligne ; une ligne trop longue passe à la ligne toute seule */
+  var lines = [];
+  t.replace(/\r/g,'').split('\n').forEach(function(par){
+    var line = '';
+    par.split(/[ 	]+/).filter(Boolean).forEach(function(w){
+      var test = line ? line + ' ' + w : w;
+      if (line && copyWidth(test) > CFG.copy.maxW){ lines.push(line); line = w; } else line = test;
+    });
+    lines.push(line);
+  });
+  return lines;
+}
+function copyFits(t){
+  var L = copyLines(t);
+  return L.length <= CFG.copy.maxLines && L.every(function(l){ return copyWidth(l) <= CFG.copy.maxW; });
+}
+function drawCopyLines(g, t, shadow){
+  var L = copyLines(t);
+  L.forEach(function(l, k){
+    var y = CFG.copy.baseline - (L.length - 1 - k)*CFG.copy.pitch, x = CFG.copy.cx - copyWidth(l)/2;
+    for (var i=0;i<l.length;i++){ if (shadow) g.strokeText(l[i], x, y); g.fillText(l[i], x, y); x += g.measureText(l[i]).width + CFG.copy.spacing; }
+  });
+}
 function copyWidth(t){
   mctx.font = copyFont();
   return mctx.measureText(t).width + Math.max(0, t.length-1) * CFG.copy.spacing;
@@ -310,8 +338,7 @@ function drawText(){
   if (c){
     ctx.save();
     ctx.font = copyFont(); ctx.fillStyle = '#ffffff'; ctx.globalAlpha = CFG.copy.alpha;
-    var x = CFG.copy.cx - copyWidth(c)/2;
-    for (var i=0;i<c.length;i++){ ctx.fillText(c[i], x, CFG.copy.baseline); x += ctx.measureText(c[i]).width + CFG.copy.spacing; }
+    drawCopyLines(ctx, c);
     ctx.restore();
   }
 }
@@ -403,11 +430,24 @@ function cleanMain(){
   root.innerHTML = html;
   if (off >= 0) placeCaret(off);
 }
+/* saisie refusée : remet l'ancien texte en laissant le curseur là où il était */
+function revert(el, v){
+  var p = el.selectionStart, d = el.value.length - v.length;
+  el.value = v;
+  if (p != null){ p = clamp(p - d, 0, v.length); try { el.setSelectionRange(p, p); } catch(e){} }
+}
+function revertMain(html){
+  var root = $('main'), off = caretOffset(), tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  var d = charCount(root) - charCount(tmp);
+  root.innerHTML = html;
+  if (off < 0) caretToEnd(root); else placeCaret(Math.max(0, off - d));
+}
 function checkMain(){
   cleanMain();
   var L = layout(readRuns());
   if (L.lines.length > CFG.body.maxLines || L.tooWide){
-    $('main').innerHTML = okMain; caretToEnd($('main'));
+    revertMain(okMain);
     warn('Trois lignes maximum : ce texte ne rentre pas, la dernière modification a été annulée.');
     return;
   }
@@ -432,11 +472,11 @@ $('boldBtn').addEventListener('click', function(){
 $('label').addEventListener('keydown', function(e){ if (e.key === 'Enter') e.preventDefault(); });
 $('label').addEventListener('input', function(){
   mctx.font = labelFont();
-  if (mctx.measureText(labelText()).width > CFG.body.right - CFG.label.left){ this.value = okLabel; warn('Rubrique trop longue pour tenir sur une ligne.'); return; }
+  if (mctx.measureText(labelText()).width > CFG.body.right - CFG.label.left){ revert(this, okLabel); warn('Rubrique trop longue pour tenir sur une ligne.'); return; }
   okLabel = this.value; schedule();
 });
 $('copyr').addEventListener('input', function(){
-  if (copyWidth(copyText()) > CFG.copy.maxW){ this.value = okCopy; warn('Copyright trop long pour tenir sur une ligne.'); return; }
+  if (!copyFits(this.value.replace(/^\s+/, ''))){ revert(this, okCopy); warn('Copyright : 3 lignes maximum, la dernière modification a été annulée.'); return; }
   okCopy = this.value; schedule();
 });
 $('copySym').addEventListener('mousedown', function(e){ e.preventDefault(); });   /* garde le curseur dans le champ */
